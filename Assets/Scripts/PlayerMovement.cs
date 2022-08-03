@@ -1,50 +1,92 @@
+using System.Collections;
 using UnityEngine;
 
 public class PlayerMovement : MonoBehaviour
 {
-    [SerializeField] private CharacterController characterController;
-    [SerializeField] private float speed = 3;
+    [SerializeField] private CharacterController _characterController;
+    [SerializeField] private float _speed = 3;
+    [Space]
+    [SerializeField] private Transform _turret;
+    [SerializeField] private float _reloadingTime = 1;
+    [Space]
+    [SerializeField] private Transform _muzzleTransform;
+    [SerializeField] private Transform _bulletsContainer;
+    [SerializeField] private GameObject _bulletPrefab;
+    [Space]
+    [SerializeField] private Joystick _moveJoystick;
+    [SerializeField] private Joystick _attackJoystick;
+
+    private bool _isNeedToShoot;
+    private float _currentReloadingTime;
     
-    [SerializeField] private Transform cameraArm;
-    [SerializeField] private float mouseSensitivity = 2f;
-    [SerializeField] private float upLimit = -50;
-    [SerializeField] private float downLimit = 50;
-
-    // gravity
-    private float gravity = 9.87f;
-
-    private void Awake()
+    private void Start()
     {
-        Cursor.lockState = CursorLockMode.Locked;
-        Cursor.visible = false;
+        // Cursor.lockState = CursorLockMode.Locked;
+        // Cursor.visible = false;
+
+        StartCoroutine(ShootingCoroutine());
     }
 
     void Update()
     {
         Move();
-        Rotate();
-    }
-
-    public void Rotate()
-    {
-        float horizontalRotation = Input.GetAxis("Mouse X");
-        float verticalRotation = Input.GetAxis("Mouse Y");
-
-        transform.Rotate(0, horizontalRotation * mouseSensitivity, 0);
-        cameraArm.Rotate(-verticalRotation * mouseSensitivity, 0, 0);
-
-        Vector3 currentRotation = cameraArm.localEulerAngles;
-        if (currentRotation.x > 180) currentRotation.x -= 360;
-        currentRotation.x = Mathf.Clamp(currentRotation.x, upLimit, downLimit);
-        cameraArm.localRotation = Quaternion.Euler(currentRotation);
+        Attack();
     }
 
     private void Move()
     {
-        float horizontalMove = Input.GetAxis("Horizontal");
-        float verticalMove = Input.GetAxis("Vertical");
+        float horizontalMove = _moveJoystick.Horizontal;
+        float verticalMove = _moveJoystick.Vertical;
         
-        Vector3 move = transform.forward * verticalMove + transform.right * horizontalMove;
-        characterController.Move(speed * Time.deltaTime * move);
+        if (horizontalMove * horizontalMove + verticalMove * verticalMove == 0)
+            return;
+
+        Quaternion rot = Quaternion.LookRotation(new Vector3(horizontalMove, 0, verticalMove), transform.up);
+        transform.rotation = rot;
+
+        _characterController.Move(_speed * Time.deltaTime * transform.forward);
+    }
+
+    private void Attack()
+    {
+        float horizontalAttack = _attackJoystick.Horizontal;
+        float verticalAttack = _attackJoystick.Vertical;
+        
+        if (horizontalAttack * horizontalAttack + verticalAttack * verticalAttack == 0)
+            return;
+        
+        Quaternion rot = Quaternion.LookRotation(new Vector3(horizontalAttack, 0, verticalAttack), _turret.up);
+        _turret.rotation = rot;
+
+        Shoot();
+    }
+
+    private void Shoot()
+    {
+        _isNeedToShoot = true;
+    }
+
+    private IEnumerator ShootingCoroutine()
+    {
+        while (true)
+        {
+            // wait for shoot command
+            while (!_isNeedToShoot)
+                yield return null;
+            
+            // shoot
+            Instantiate(_bulletPrefab, _muzzleTransform.position, _muzzleTransform.rotation, _bulletsContainer);
+            
+            // reload
+            _currentReloadingTime = _reloadingTime;
+            while (_currentReloadingTime > 0)
+            {
+                _currentReloadingTime -= Time.deltaTime;
+                yield return null;
+            }
+
+            // prepare for new shoot command
+            _isNeedToShoot = false;
+        }
     }
 }
