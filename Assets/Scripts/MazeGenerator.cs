@@ -1,91 +1,165 @@
-using System;
-using System.Collections;
+﻿using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
 using UnityEngine;
-using Random = UnityEngine.Random;
+using System;
 
-public class MazeGenerator : MonoBehaviour
+[Flags]
+public enum WallState
 {
-    [SerializeField] private int width;
-    [SerializeField] private int height;
-    [SerializeField] private float sampleSize = 1;
-    
-    [Header("Borders")]
-    [SerializeField] private GameObject[] walls;
-    [SerializeField] private GameObject[] corners;
+    // 0000 -> NO WALLS
+    // 1111 -> LEFT,RIGHT,UP,DOWN
+    LEFT = 1, // 0001
+    RIGHT = 2, // 0010
+    UP = 4, // 0100
+    DOWN = 8, // 1000
 
-    [Header("Inside")] 
-    [SerializeField] private GameObject[] buildings;
-    [SerializeField] private GameObject[] plants;
+    VISITED = 128, // 1000 0000
+}
 
-    private int[,] _map;
+public struct Position
+{
+    public int X;
+    public int Y;
+}
 
-    private void Start() 
-        => CreateMap();
+public struct Neighbour
+{
+    public Position Position;
+    public WallState SharedWall;
+}
 
-    public void Clear()
+public static class MazeGenerator
+{
+
+    private static WallState GetOppositeWall(WallState wall)
     {
-        for(int i = 0; i < transform.childCount; i++) 
-            DestroyImmediate(transform.GetChild(i).gameObject);
-    }
-	
-    public void CreateMap()
-    {
-        Clear();
-
-        _map = Maze.Generate(width, height);
-
-        if(_map == null) 
-            return;
-
-        width = Maze.Round(width);
-        height = Maze.Round(height);
-
-        float posX = -sampleSize * width / 2f - sampleSize / 2f;
-        float posY = sampleSize * height / 2f - sampleSize / 2f;
-        float xReset = posX;
-       
-        for(int y = 0; y < height; y++)
+        switch (wall)
         {
-            for(int x = 0; x < width; x++)
-            {
-                posX += sampleSize;
-                if (_map[x, y] != 1)
-                {
-                    GameObject tmpCube;
-                    if ((x == 0 || x == width - 1) && (y == 0 || y == height - 1))
-                    {
-                        tmpCube = Instantiate(corners[Random.Range(0, corners.Length)], transform);
-                    }
-                    else if(x == 0 || x == width - 1)
-                    {
-                        tmpCube = Instantiate(Random.value < 0.8 ? walls[0] : walls[Random.Range(1, walls.Length)], transform);
-                        tmpCube.transform.rotation = Quaternion.Euler(0, 90, 0);
-                    }
-                    else if (y == 0 || y == height - 1)
-                    {
-                        tmpCube = Instantiate(Random.value < 0.8 ? walls[0] : walls[Random.Range(1, walls.Length)], transform);
-                    }
-                    else
-                    {
-                        tmpCube = Instantiate(buildings[Random.Range(0, buildings.Length)], transform);
-                    }
-                    
-                    tmpCube.transform.localPosition = new Vector3(posX, 0.5f, posY);
-                }
-                else
-                {
-                    if(Random.value > 0.1)
-                        continue;
-                    
-                    GameObject plant = Instantiate(plants[Random.Range(0, plants.Length)], transform);
-                    plant.transform.localPosition = new Vector3(posX, 0.5f, posY);
-                    plant.transform.rotation = Quaternion.Euler(0, Random.Range(0, 180), 0);
-                }
-            }
-            posY -= sampleSize;
-            posX = xReset;
+            case WallState.RIGHT: return WallState.LEFT;
+            case WallState.LEFT: return WallState.RIGHT;
+            case WallState.UP: return WallState.DOWN;
+            case WallState.DOWN: return WallState.UP;
+            default: return WallState.LEFT;
         }
+    }
+
+    private static WallState[,] ApplyRecursiveBacktracker(WallState[,] maze, int width, int height)
+    {
+        // here we make changes
+        var rng = new System.Random(/*seed*/);
+        var positionStack = new Stack<Position>();
+        var position = new Position { X = rng.Next(0, width), Y = rng.Next(0, height) };
+
+        maze[position.X, position.Y] |= WallState.VISITED;  // 1000 1111
+        positionStack.Push(position);
+
+        while (positionStack.Count > 0)
+        {
+            var current = positionStack.Pop();
+            var neighbours = GetUnvisitedNeighbours(current, maze, width, height);
+
+            if (neighbours.Count > 0)
+            {
+                positionStack.Push(current);
+
+                var randIndex = rng.Next(0, neighbours.Count);
+                var randomNeighbour = neighbours[randIndex];
+
+                var nPosition = randomNeighbour.Position;
+                maze[current.X, current.Y] &= ~randomNeighbour.SharedWall;
+                maze[nPosition.X, nPosition.Y] &= ~GetOppositeWall(randomNeighbour.SharedWall);
+                maze[nPosition.X, nPosition.Y] |= WallState.VISITED;
+
+                positionStack.Push(nPosition);
+            }
+        }
+
+        return maze;
+    }
+
+    private static List<Neighbour> GetUnvisitedNeighbours(Position p, WallState[,] maze, int width, int height)
+    {
+        var list = new List<Neighbour>();
+
+        if (p.X > 0) // left
+        {
+            if (!maze[p.X - 1, p.Y].HasFlag(WallState.VISITED))
+            {
+                list.Add(new Neighbour
+                {
+                    Position = new Position
+                    {
+                        X = p.X - 1,
+                        Y = p.Y
+                    },
+                    SharedWall = WallState.LEFT
+                });
+            }
+        }
+
+        if (p.Y > 0) // DOWN
+        {
+            if (!maze[p.X, p.Y - 1].HasFlag(WallState.VISITED))
+            {
+                list.Add(new Neighbour
+                {
+                    Position = new Position
+                    {
+                        X = p.X,
+                        Y = p.Y - 1
+                    },
+                    SharedWall = WallState.DOWN
+                });
+            }
+        }
+
+        if (p.Y < height - 1) // UP
+        {
+            if (!maze[p.X, p.Y + 1].HasFlag(WallState.VISITED))
+            {
+                list.Add(new Neighbour
+                {
+                    Position = new Position
+                    {
+                        X = p.X,
+                        Y = p.Y + 1
+                    },
+                    SharedWall = WallState.UP
+                });
+            }
+        }
+
+        if (p.X < width - 1) // RIGHT
+        {
+            if (!maze[p.X + 1, p.Y].HasFlag(WallState.VISITED))
+            {
+                list.Add(new Neighbour
+                {
+                    Position = new Position
+                    {
+                        X = p.X + 1,
+                        Y = p.Y
+                    },
+                    SharedWall = WallState.RIGHT
+                });
+            }
+        }
+
+        return list;
+    }
+
+    public static WallState[,] Generate(int width, int height)
+    {
+        WallState[,] maze = new WallState[width, height];
+        WallState initial = WallState.RIGHT | WallState.LEFT | WallState.UP | WallState.DOWN;
+        for (int i = 0; i < width; ++i)
+        {
+            for (int j = 0; j < height; ++j)
+            {
+                maze[i, j] = initial;  // 1111
+            }
+        }
+        
+        return ApplyRecursiveBacktracker(maze, width, height);
     }
 }
